@@ -19,7 +19,7 @@
  *
  */
 
-package main
+package websocket
 
 import (
 	"log"
@@ -50,7 +50,7 @@ var (
 	}
 )
 
-func makeWSHandler(connectionCounter ConnectionCounter, sessionManager SessionManager, codec Codec, channellingAPI ChannellingAPI) http.HandlerFunc {
+func NewHandler(newConnectionHandler func(*http.Request) ConnectionHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Validate incoming request.
 		if r.Method != "GET" {
@@ -68,10 +68,9 @@ func makeWSHandler(connectionCounter ConnectionCounter, sessionManager SessionMa
 		}
 
 		// Create a new connection instance.
-		session := sessionManager.CreateSession(r)
-		defer sessionManager.DestroySession(session)
-		client := NewClient(codec, channellingAPI, session)
-		conn := NewConnection(connectionCounter.CountConnection(), ws, client)
+		client := newConnectionHandler(r)
+
+		conn := newConnection(ws, client)
 
 		// Start pumps (readPump blocks).
 		go conn.writePump()

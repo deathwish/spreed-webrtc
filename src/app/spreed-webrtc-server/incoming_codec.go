@@ -25,40 +25,42 @@ import (
 	"bytes"
 	"encoding/json"
 	"log"
+
+	"app/spreed-webrtc-server/websocket"
 )
 
 type IncomingDecoder interface {
-	DecodeIncoming(Buffer) (*DataIncoming, error)
+	DecodeIncoming(websocket.Buffer) (*DataIncoming, error)
 }
 
 type OutgoingEncoder interface {
-	EncodeOutgoing(*DataOutgoing) (Buffer, error)
+	EncodeOutgoing(*DataOutgoing) (websocket.Buffer, error)
 }
 
 type Codec interface {
-	NewBuffer() Buffer
+	NewBuffer() websocket.Buffer
 	IncomingDecoder
 	OutgoingEncoder
 }
 
 type incomingCodec struct {
-	buffers BufferCache
+	buffers websocket.BufferCache
 }
 
 func NewCodec() Codec {
-	return &incomingCodec{NewBufferCache(1024, bytes.MinRead)}
+	return &incomingCodec{websocket.NewBufferCache(1024, bytes.MinRead)}
 }
 
-func (codec incomingCodec) NewBuffer() Buffer {
+func (codec incomingCodec) NewBuffer() websocket.Buffer {
 	return codec.buffers.New()
 }
 
-func (codec incomingCodec) DecodeIncoming(b Buffer) (*DataIncoming, error) {
+func (codec incomingCodec) DecodeIncoming(b websocket.Buffer) (*DataIncoming, error) {
 	incoming := &DataIncoming{}
 	return incoming, json.Unmarshal(b.Bytes(), incoming)
 }
 
-func (codec incomingCodec) EncodeOutgoing(outgoing *DataOutgoing) (Buffer, error) {
+func (codec incomingCodec) EncodeOutgoing(outgoing *DataOutgoing) (websocket.Buffer, error) {
 	b := codec.NewBuffer()
 	if err := json.NewEncoder(b).Encode(outgoing); err != nil {
 		log.Println("Error while encoding JSON", err)

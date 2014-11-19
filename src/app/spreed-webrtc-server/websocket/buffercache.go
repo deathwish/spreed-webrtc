@@ -19,7 +19,7 @@
  *
  */
 
-package main
+package websocket
 
 import (
 	"bytes"

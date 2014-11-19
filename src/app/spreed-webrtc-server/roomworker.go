@@ -26,6 +26,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"app/spreed-webrtc-server/websocket"
 )
 
 const (
@@ -39,7 +41,7 @@ type RoomWorker interface {
 	Users() []*roomUser
 	Update(*DataRoom) error
 	GetUsers() []*DataSession
-	Broadcast(*Session, Buffer)
+	Broadcast(*Session, websocket.Buffer)
 	Join(*DataRoomCredentials, *Session, Sender) (*DataRoom, error)
 	Leave(*Session)
 }
@@ -213,7 +215,7 @@ func (r *roomWorker) GetUsers() []*DataSession {
 	return <-out
 }
 
-func (r *roomWorker) Broadcast(session *Session, message Buffer) {
+func (r *roomWorker) Broadcast(session *Session, message websocket.Buffer) {
 
 	worker := func() {
 		r.mutex.RLock()

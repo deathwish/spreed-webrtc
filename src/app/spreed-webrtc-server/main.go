@@ -22,7 +22,6 @@
 package main
 
 import (
-	"app/spreed-webrtc-server/sleepy"
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
@@ -42,6 +41,9 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"app/spreed-webrtc-server/sleepy"
+	"app/spreed-webrtc-server/websocket"
 )
 
 var version = "unreleased"
@@ -337,7 +339,11 @@ func runner(runtime phoenix.Runtime) error {
 	r.Handle("/static/{path:.*}", http.StripPrefix(config.B, httputils.FileStaticServer(http.Dir(rootFolder))))
 	r.Handle("/robots.txt", http.StripPrefix(config.B, http.FileServer(http.Dir(path.Join(rootFolder, "static")))))
 	r.Handle("/favicon.ico", http.StripPrefix(config.B, http.FileServer(http.Dir(path.Join(rootFolder, "static", "img")))))
-	r.Handle("/ws", makeWSHandler(statsManager, sessionManager, codec, channellingAPI))
+	r.Handle("/ws", websocket.NewHandler(func(r *http.Request) websocket.ConnectionHandler {
+		session := sessionManager.CreateSession(r)
+		index := statsManager.CountConnection()
+		return NewClient(codec, sessionManager, channellingAPI, index, session)
+	}))
 	r.HandleFunc("/{room}", httputils.MakeGzipHandler(roomHandler))
 
 	// Add API end points.

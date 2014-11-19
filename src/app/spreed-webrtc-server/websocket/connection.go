@@ -19,7 +19,7 @@
  *
  */
 
-package main
+package websocket
 
 import (
 	"container/list"
@@ -54,14 +54,12 @@ const (
 )
 
 type Connection interface {
-	Index() uint64
 	Send(Buffer)
 	Close(runCallbacks bool)
-	readPump()
-	writePump()
 }
 
 type ConnectionHandler interface {
+	Index() uint64
 	NewBuffer() Buffer
 	OnConnect(Connection)
 	OnText(Buffer)
@@ -70,32 +68,24 @@ type ConnectionHandler interface {
 
 type connection struct {
 	// References.
-	ws      *websocket.Conn
-	handler ConnectionHandler
+	ws *websocket.Conn
+	ConnectionHandler
 
 	// Data handling.
 	condition *sync.Cond
 	queue     list.List
 	mutex     sync.Mutex
 	isClosed  bool
-
-	// Debugging
-	Idx uint64
 }
 
-func NewConnection(index uint64, ws *websocket.Conn, handler ConnectionHandler) Connection {
+func newConnection(ws *websocket.Conn, handler ConnectionHandler) *connection {
 	c := &connection{
-		ws:      ws,
-		handler: handler,
-		Idx:     index,
+		ws:                ws,
+		ConnectionHandler: handler,
 	}
 	c.condition = sync.NewCond(&c.mutex)
 
 	return c
-}
-
-func (c *connection) Index() uint64 {
-	return c.Idx
 }
 
 func (c *connection) Close(runCallbacks bool) {
@@ -105,7 +95,7 @@ func (c *connection) Close(runCallbacks bool) {
 		return
 	}
 	if runCallbacks {
-		c.handler.OnDisconnect()
+		c.OnDisconnect()
 	}
 	c.ws.Close()
 	c.isClosed = true
@@ -133,15 +123,15 @@ func (c *connection) readPump() {
 	times := list.New()
 
 	// NOTE(lcooper): This more or less assumes that the write pump is started.
-	c.handler.OnConnect(c)
+	c.OnConnect(c)
 
 	for {
-		//fmt.Println("readPump wait nextReader", c.Idx)
+		//fmt.Println("readPump wait nextReader", c.Index())
 		op, r, err := c.ws.NextReader()
 		if err != nil {
 			if err == io.EOF {
 			} else {
-				log.Println("Error while reading", c.Idx, err)
+				log.Println("Error while reading", c.Index(), err)
 			}
 			break
 		}
@@ -159,13 +149,13 @@ func (c *connection) readPump() {
 			}
 			times.PushBack(now)
 
-			message := c.handler.NewBuffer()
+			message := c.NewBuffer()
 			err = readAll(message, r)
 			if err != nil {
 				message.Decref()
 				break
 			}
-			c.handler.OnText(message)
+			c.OnText(message)
 			message.Decref()
 		}
 	}
@@ -180,9 +170,9 @@ func (c *connection) Send(message Buffer) {
 	if c.isClosed {
 		return
 	}
-	//fmt.Println("Outbound queue size", c.Idx, len(c.queue))
+	//fmt.Println("Outbound queue size", c.Index(), len(c.queue))
 	if c.queue.Len() >= maxQueueSize {
-		log.Println("Outbound queue overflow", c.Idx, c.queue.Len())
+		log.Println("Outbound queue overflow", c.Index(), c.queue.Len())
 		return
 	}
 	message.Incref()
@@ -236,7 +226,7 @@ func (c *connection) writePump() {
 				ping = false
 				c.mutex.Unlock()
 				if err := c.ping(); err != nil {
-					log.Println("Error while sending ping", c.Idx, err)
+					log.Println("Error while sending ping", c.Index(), err)
 					message.Decref()
 					goto cleanup
 				}
@@ -244,7 +234,7 @@ func (c *connection) writePump() {
 				c.mutex.Unlock()
 			}
 			if err := c.write(websocket.TextMessage, message.Bytes()); err != nil {
-				log.Println("Error while writing", c.Idx, err)
+				log.Println("Error while writing", c.Index(), err)
 				message.Decref()
 				goto cleanup
 			}
@@ -256,7 +246,7 @@ func (c *connection) writePump() {
 			ping = false
 			c.mutex.Unlock()
 			if err := c.ping(); err != nil {
-				log.Println("Error while sending ping", c.Idx, err)
+				log.Println("Error while sending ping", c.Index(), err)
 				goto cleanup
 			}
 		} else {

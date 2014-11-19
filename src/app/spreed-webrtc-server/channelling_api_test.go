@@ -24,13 +24,15 @@ package main
 import (
 	"errors"
 	"testing"
+
+	"app/spreed-webrtc-server/websocket"
 )
 
 type fakeClient struct {
 	replies map[string]interface{}
 }
 
-func (fake *fakeClient) Send(_ Buffer) {
+func (fake *fakeClient) Send(_ websocket.Buffer) {
 }
 
 func (fake *fakeClient) Reply(iid string, msg interface{}) {

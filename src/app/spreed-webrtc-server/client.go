@@ -23,10 +23,12 @@ package main
 
 import (
 	"log"
+
+	"app/spreed-webrtc-server/websocket"
 )
 
 type Sender interface {
-	Send(Buffer)
+	Send(websocket.Buffer)
 }
 
 type ResponseSender interface {
@@ -47,21 +49,31 @@ type Client interface {
 
 type client struct {
 	Codec
+	SessionManager
 	ChannellingAPI
-	Connection
+	websocket.Connection
+	index   uint64
 	session *Session
 }
 
-func NewClient(codec Codec, api ChannellingAPI, session *Session) *client {
-	return &client{codec, api, nil, session}
+func NewClient(codec Codec, sessionManager SessionManager, api ChannellingAPI, index uint64, session *Session) *client {
+	return &client{codec, sessionManager, api, nil, index, session}
 }
 
-func (client *client) OnConnect(conn Connection) {
+func (client *client) Index() uint64 {
+	return client.index
+}
+
+func (client *client) Session() *Session {
+	return client.session
+}
+
+func (client *client) OnConnect(conn websocket.Connection) {
 	client.Connection = conn
 	client.ChannellingAPI.OnConnect(client, client.session)
 }
 
-func (client *client) OnText(b Buffer) {
+func (client *client) OnText(b websocket.Buffer) {
 	if incoming, err := client.DecodeIncoming(b); err == nil {
 		client.OnIncoming(client, client.session, incoming)
 	} else {
@@ -82,6 +94,7 @@ func (client *client) Reply(iid string, m interface{}) {
 	}
 }
 
-func (client *client) Session() *Session {
-	return client.session
+func (client *client) Close(runCallbacks bool) {
+	client.Connection.Close(runCallbacks)
+	client.DestroySession(client.session)
 }
