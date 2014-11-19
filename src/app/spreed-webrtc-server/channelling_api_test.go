@@ -199,9 +199,9 @@ func Test_ChannellingAPI_OnIncoming_HelloMessageWithAnIid_RespondsWithAnErrorIfT
 	api, client, session, roomManager := NewTestChannellingAPI()
 	roomManager.joinError = NewDataError("bad_join", "")
 
-	api.OnIncoming(client, session, &DataIncoming{Type: "Hello", Iid: iid, Hello: &DataHello{}})
+	err := api.OnIncoming(client, session, &DataIncoming{Type: "Hello", Iid: iid, Hello: &DataHello{}})
 
-	assertErrorReply(t, client, iid, "bad_join")
+	assertDataError(t, err, "bad_join")
 }
 
 func Test_ChannellingAPI_OnIncoming_RoomMessage_RespondsWithAndBroadcastsTheUpdatedRoom(t *testing.T) {
@@ -236,7 +236,7 @@ func Test_ChannellingAPI_OnIncoming_RoomMessage_RespondsWithAnErrorIfUpdatingThe
 	roomManager.updateError = NewDataError("a_room_error", "")
 
 	api.OnIncoming(client, session, &DataIncoming{Type: "Hello", Iid: "0", Hello: &DataHello{Id: roomName}})
-	api.OnIncoming(client, session, &DataIncoming{Type: "Room", Iid: iid, Room: &DataRoom{Name: roomName}})
+	err := api.OnIncoming(client, session, &DataIncoming{Type: "Room", Iid: iid, Room: &DataRoom{Name: roomName}})
 
-	assertErrorReply(t, client, iid, "a_room_error")
+	assertDataError(t, err, "a_room_error")
 }

@@ -22,6 +22,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -33,7 +34,7 @@ const (
 
 type ChannellingAPI interface {
 	OnConnect(Client, *Session)
-	OnIncoming(ResponseSender, *Session, *DataIncoming)
+	OnIncoming(ResponseSender, *Session, *DataIncoming) error
 	OnDisconnect(*Session)
 }
 
@@ -67,13 +68,21 @@ func NewChannellingAPI(config *Config, roomStatus RoomStatusManager, sessionEnco
 
 func (api *channellingAPI) OnConnect(client Client, session *Session) {
 	api.Unicaster.OnConnect(client, session)
-	api.SendSelf(client, session)
+	if self, err := api.MakeSelf(session); err == nil {
+		client.Reply("", self)
+	} else {
+		log.Println("Error in OnConnect", err)
+	}
 }
 
-func (api *channellingAPI) OnIncoming(c ResponseSender, session *Session, msg *DataIncoming) {
+func (api *channellingAPI) OnIncoming(c ResponseSender, session *Session, msg *DataIncoming) error {
 	switch msg.Type {
 	case "Self":
-		api.SendSelf(c, session)
+		self, err := api.MakeSelf(session)
+		if err != nil {
+			return err
+		}
+		c.Reply(msg.Iid, self)
 	case "Hello":
 		//log.Println("Hello", msg.Hello, c.Index())
 		// TODO(longsleep): Filter room id and user agent.
@@ -83,25 +92,21 @@ func (api *channellingAPI) OnIncoming(c ResponseSender, session *Session, msg *D
 			api.Broadcast(session, session.DataSessionLeft("soft"))
 		}
 
-		// NOTE(lcooper): Iid filtered for compatibility's sake.
-		// Evaluate sending unconditionally when supported by all clients.
-		if room, err := api.JoinRoom(msg.Hello.Id, msg.Hello.Credentials, session, c); err == nil {
-			session.Hello = true
-			session.Roomid = msg.Hello.Id
-			if msg.Iid != "" {
-				c.Reply(msg.Iid, &DataWelcome{
-					Type:  "Welcome",
-					Room:  room,
-					Users: api.RoomUsers(session),
-				})
-			}
-			api.Broadcast(session, session.DataSessionJoined())
-		} else {
+		room, err := api.JoinRoom(msg.Hello.Id, msg.Hello.Credentials, session, c)
+		if err != nil {
 			session.Hello = false
-			if msg.Iid != "" {
-				c.Reply(msg.Iid, err)
-			}
+			return err
 		}
+		session.Hello = true
+		session.Roomid = msg.Hello.Id
+		if msg.Iid != "" {
+			c.Reply(msg.Iid, &DataWelcome{
+				Type:  "Welcome",
+				Room:  room,
+				Users: api.RoomUsers(session),
+			})
+		}
+		api.Broadcast(session, session.DataSessionJoined())
 	case "Offer":
 		// TODO(longsleep): Validate offer
 		api.Unicast(session, msg.Offer.To, msg.Offer)
@@ -119,16 +124,20 @@ func (api *channellingAPI) OnIncoming(c ResponseSender, session *Session, msg *D
 	case "Authentication":
 		st := msg.Authentication.Authentication
 		if st == nil {
-			return
+			// TODO(lcooper): Should this return an error?
+			return nil
 		}
 
-		if err := api.Authenticate(session, st, ""); err == nil {
-			log.Println("Authentication success", session.Userid)
-			api.SendSelf(c, session)
-			api.BroadcastSessionStatus(session)
-		} else {
-			log.Println("Authentication failed", err, st.Userid, st.Nonce)
+		if err := api.Authenticate(session, st, ""); err != nil {
+			return fmt.Errorf("Authentication failed", err, st.Userid, st.Nonce)
 		}
+		self, err := api.MakeSelf(session)
+		if err != nil {
+			return err
+		}
+		log.Println("Authentication success", session.Userid)
+		api.BroadcastSessionStatus(session)
+		c.Reply(msg.Iid, self)
 	case "Bye":
 		api.Unicast(session, msg.Bye.To, msg.Bye)
 	case "Status":
@@ -150,8 +159,7 @@ func (api *channellingAPI) OnIncoming(c ResponseSender, session *Session, msg *D
 		} else {
 			if msg.Chat.Chat.Status != nil && msg.Chat.Chat.Status.ContactRequest != nil {
 				if err := api.contactrequestHandler(session, msg.Chat.To, msg.Chat.Chat.Status.ContactRequest); err != nil {
-					log.Println("Ignoring invalid contact request.", err)
-					return
+					return fmt.Errorf("Ignoring invalid contact request. %v", err)
 				}
 				msg.Chat.Chat.Status.ContactRequest.Userid = session.Userid()
 			}
@@ -168,13 +176,13 @@ func (api *channellingAPI) OnIncoming(c ResponseSender, session *Session, msg *D
 	case "Conference":
 		// Check conference maximum size.
 		if len(msg.Conference.Conference) > maxConferenceSize {
-			log.Println("Refusing to create conference above limit.", len(msg.Conference.Conference))
-		} else {
-			// Send conference update to anyone.
-			for _, id := range msg.Conference.Conference {
-				if id != session.Id {
-					api.Unicast(session, id, msg.Conference)
-				}
+			return fmt.Errorf("Refusing to create conference with size %v above limit.", len(msg.Conference.Conference))
+		}
+
+		// Send conference update to anyone.
+		for _, id := range msg.Conference.Conference {
+			if id != session.Id {
+				api.Unicast(session, id, msg.Conference)
 			}
 		}
 	case "Alive":
@@ -183,42 +191,38 @@ func (api *channellingAPI) OnIncoming(c ResponseSender, session *Session, msg *D
 		var users []*DataSession
 		switch msg.Sessions.Sessions.Type {
 		case "contact":
-			if userID, err := api.getContactID(session, msg.Sessions.Sessions.Token); err == nil {
-				users = api.GetUserSessions(session, userID)
-			} else {
-				log.Printf(err.Error())
+			userID, err := api.getContactID(session, msg.Sessions.Sessions.Token)
+			if err != nil {
+				return err
 			}
+			users = api.GetUserSessions(session, userID)
 		case "session":
 			id, err := session.attestation.Decode(msg.Sessions.Sessions.Token)
 			if err != nil {
-				log.Printf("Failed to decode incoming attestation", err, msg.Sessions.Sessions.Token)
-				break
+				return fmt.Errorf("Failed to decode incoming attestation %v: %v", msg.Sessions.Sessions.Token, err)
 			}
 			session, ok := api.GetSession(id)
 			if !ok {
-				log.Printf("Cannot retrieve session for id %s", id)
-				break
+				return fmt.Errorf("Cannot retrieve session for id %s", id)
 			}
-			users = make([]*DataSession, 1, 1)
-			users[0] = session.Data()
+			users = []*DataSession{session.Data()}
 		default:
-			log.Printf("Unkown incoming sessions request type %s", msg.Sessions.Sessions.Type)
+			return fmt.Errorf("Unknown incoming sessions request type %s", msg.Sessions.Sessions.Type)
 		}
 
-		// TODO(lcooper): We ought to reply with a *DataError here if failed.
-		if users != nil {
-			c.Reply(msg.Iid, &DataSessions{Type: "Sessions", Users: users, Sessions: msg.Sessions.Sessions})
-		}
+		// TODO(lcooper): We ought to reply with a *DataError if failed.
+		c.Reply(msg.Iid, &DataSessions{Type: "Sessions", Users: users, Sessions: msg.Sessions.Sessions})
 	case "Room":
-		if room, err := api.UpdateRoom(session, msg.Room); err == nil {
-			api.Broadcast(session, room)
-			c.Reply(msg.Iid, room)
-		} else {
-			c.Reply(msg.Iid, err)
+		room, err := api.UpdateRoom(session, msg.Room)
+		if err != nil {
+			return err
 		}
+		api.Broadcast(session, room)
+		c.Reply(msg.Iid, room)
 	default:
-		log.Println("OnText unhandled message type", msg.Type)
+		return fmt.Errorf("OnIncoming unhandled message type %s", msg.Type)
 	}
+	return nil
 }
 
 func (api *channellingAPI) OnDisconnect(session *Session) {
@@ -238,15 +242,13 @@ func (api *channellingAPI) OnDisconnect(session *Session) {
 	api.buddyImages.Delete(session.Id)
 }
 
-func (api *channellingAPI) SendSelf(c Responder, session *Session) {
+func (api *channellingAPI) MakeSelf(session *Session) (*DataSelf, error) {
 	token, err := api.EncodeSessionToken(session)
 	if err != nil {
-		log.Println("Error in OnRegister", err)
-		return
+		return nil, err
 	}
-
 	log.Println("Created new session token", len(token), token)
-	self := &DataSelf{
+	return &DataSelf{
 		Type:    "Self",
 		Id:      session.Id,
 		Sid:     session.Sid,
@@ -256,8 +258,7 @@ func (api *channellingAPI) SendSelf(c Responder, session *Session) {
 		Version: api.Version,
 		Turn:    api.CreateTurnData(session),
 		Stun:    api.StunURIs,
-	}
-	c.Reply("", self)
+	}, nil
 }
 
 func (api *channellingAPI) UpdateSession(session *Session, s *SessionUpdate) uint64 {

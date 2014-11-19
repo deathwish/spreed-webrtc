@@ -62,7 +62,7 @@ type ConnectionHandler interface {
 	Index() uint64
 	NewBuffer() Buffer
 	OnConnect(Connection)
-	OnText(Buffer)
+	OnText(Buffer) error
 	OnDisconnect()
 }
 
@@ -155,7 +155,9 @@ func (c *connection) readPump() {
 				message.Decref()
 				break
 			}
-			c.OnText(message)
+			if err := c.OnText(message); err != nil {
+				log.Printf("%v", err)
+			}
 			message.Decref()
 		}
 	}

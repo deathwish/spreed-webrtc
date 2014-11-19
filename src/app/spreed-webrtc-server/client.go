@@ -22,8 +22,6 @@
 package main
 
 import (
-	"log"
-
 	"app/spreed-webrtc-server/websocket"
 )
 
@@ -73,13 +71,19 @@ func (client *client) OnConnect(conn websocket.Connection) {
 	client.ChannellingAPI.OnConnect(client, client.session)
 }
 
-func (client *client) OnText(b websocket.Buffer) {
-	if incoming, err := client.DecodeIncoming(b); err == nil {
-		client.OnIncoming(client, client.session, incoming)
-	} else {
-		log.Println("OnText error while decoding JSON", err)
-		log.Printf("JSON:\n%s\n", b)
+func (client *client) OnText(b websocket.Buffer) error {
+	incoming, err := client.DecodeIncoming(b)
+	if err != nil {
+		return err
 	}
+	err = client.OnIncoming(client, client.session, incoming)
+	if incoming.Iid != "" && err != nil {
+		if _, ok := err.(*DataError); ok {
+			client.Reply(incoming.Iid, err)
+			return nil
+		}
+	}
+	return err
 }
 
 func (client *client) OnDisconnect() {

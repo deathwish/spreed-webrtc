@@ -24,6 +24,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"app/spreed-webrtc-server/websocket"
@@ -57,7 +58,10 @@ func (codec incomingCodec) NewBuffer() websocket.Buffer {
 
 func (codec incomingCodec) DecodeIncoming(b websocket.Buffer) (*DataIncoming, error) {
 	incoming := &DataIncoming{}
-	return incoming, json.Unmarshal(b.Bytes(), incoming)
+	if err := json.Unmarshal(b.Bytes(), incoming); err != nil {
+		return nil, fmt.Errorf("OnText error while decoding JSON\nJSON:\n%s\n", err, b)
+	}
+	return incoming, nil
 }
 
 func (codec incomingCodec) EncodeOutgoing(outgoing *DataOutgoing) (websocket.Buffer, error) {
